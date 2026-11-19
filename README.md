@@ -256,8 +256,31 @@ curl -fsSL .../install-middle.sh | sudo bash -s -- --join '<token>'
 | Dashboard unreachable from LAN | in the container: `systemctl status wireguard-dashboard`, `ss -lntp \| grep 8080` |
 | Dashboard HTTPS fails | domain must point to your home IP, `tcp/80` forwarded, `certbot --nginx -d <domain>` again inside the container |
 | Clients cannot connect at all | is `udp/51820` forwarded to the LXC, is `<LXC-IP>:51820` reachable from the LAN (`wg show wg0` lists the port), did your public IP change? |
+| Clients cannot connect **and** `tcpdump -ni any udp port 51820` sees nothing | the packets never reach you: run `wgmw-doctor` - a hop in `100.64.0.0/10` means **CGNAT**, see below |
+| Inbound packets never arrive (CGNAT) | `traceroute -n -m 4 1.1.1.1`: hop 2 in `100.64.0.0/10` means your ISP translates and no port forward can work. Ask the ISP for a public IPv4 (Dual-Stack instead of DS-Lite), or use IPv6, or move the client entry point to the VPS (see below) |
 | Container has no internet | `pct exec <id> -- ping -c1 1.1.1.1`, check `--nameserver`/gateway on the Proxmox side |
 | `waterwall` exits immediately | `journalctl -u waterwall -n 40`: either the tunnel port is already used (nginx/caddy/xray on 443) or a WaterWall release renamed a node setting |
+
+### When your ISP uses CGNAT
+
+If hop 2 of a traceroute is inside `100.64.0.0/10`, your router has no public
+IPv4 of its own - the address an outside host sees belongs to the ISP and is
+shared. Port forwarding cannot work in that situation, no matter how the rule
+is written, and clients will show `rx: 0` forever.
+
+Options, in order of effort:
+
+1. **Ask the ISP for a public IPv4** ("öffentliche IPv4-Adresse", or "Dual-Stack
+   statt DS-Lite"). Free on many German tariffs, a few euros on others. After
+   the switch re-run the middle installer (or just update the dashboard's
+   endpoint) - nothing else changes.
+2. **IPv6** - if the ISP hands out a public prefix (typical for DS-Lite), point
+   clients at a DNS name with an `AAAA` record: re-run the middle with
+   `--public-host vpn.example.org`, and create an IPv6 pinhole for `udp/51820`
+   in the router. The WireGuard endpoint becomes `[<prefix>:…]:51820`.
+3. **Use the VPS as the entry point** - clients connect to the exit instead of
+   the middle. Only worth it when 1 and 2 are impossible; it moves the
+   client-facing server out of your home.
 
 WaterWall is downloaded from its [releases](https://github.com/radkesvat/WaterWall/releases).
 If a future release renames node settings the tunnel may refuse to start; pin a

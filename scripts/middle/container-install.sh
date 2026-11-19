@@ -362,11 +362,21 @@ NGINX
     fi
 fi
 
+# An endpoint is host:port, and an IPv6 literal has to be bracketed:
+# [2001:db8::1234]:51820 . Hostnames and IPv4 are used as they are.
+endpoint_of() {
+    local host="$1" port="$2"
+    if [[ "$host" == *:* && "$host" != \[*\]* ]]; then
+        host="[$host]"
+    fi
+    printf '%s:%s' "$host" "$port"
+}
+
 if [[ -n "$PUBLIC_HOST" ]]; then
-    ENDPOINT="$PUBLIC_HOST:$WG_PORT"
+    ENDPOINT="$(endpoint_of "$PUBLIC_HOST" "$WG_PORT")"
 else
     DETECTED="$(detect_public_ipv4 || true)"
-    ENDPOINT="${DETECTED:-127.0.0.1}:$WG_PORT"
+    ENDPOINT="$(endpoint_of "${DETECTED:-127.0.0.1}" "$WG_PORT")"
     if [[ -z "$DETECTED" ]]; then
         warn "Could not detect your public IPv4 - set it later in the dashboard (Server -> endpoint)."
     fi
