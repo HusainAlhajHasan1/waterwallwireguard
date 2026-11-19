@@ -138,6 +138,7 @@ sysctl_write /etc/sysctl.d/99-waterwall-middle.conf \
 # ------------------------------------------------------------ routing sh ---
 log "Installing the policy routing helper"
 install -m 0755 "$SELF_DIR/middle-routes.sh" /usr/local/bin/wgmw-routes
+install -m 0755 "$SELF_DIR/wgmw-doctor.sh" /usr/local/bin/wgmw-doctor
 
 cat > /etc/systemd/system/wgmw-routing.service <<'EOF'
 [Unit]

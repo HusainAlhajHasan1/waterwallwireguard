@@ -374,6 +374,7 @@ for f in lib/common.sh lib/waterwall.sh; do
     pct push "$VMID" "$REPO_ROOT/scripts/$f" "/root/ww-setup/$f" -perms 0644
 done
 pct push "$VMID" "$REPO_ROOT/scripts/middle/middle-routes.sh" /root/ww-setup/middle-routes.sh -perms 0755
+pct push "$VMID" "$REPO_ROOT/scripts/middle/wgmw-doctor.sh" /root/ww-setup/wgmw-doctor.sh -perms 0755
 pct push "$VMID" "$REPO_ROOT/scripts/middle/container-install.sh" /root/ww-setup/container-install.sh -perms 0755
 
 # ------------------------------------------------------------ run it ------
