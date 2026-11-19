@@ -257,7 +257,11 @@ curl -fsSL .../install-middle.sh | sudo bash -s -- --join "$(tail -1 /root/exit-
 
 WaterWall is downloaded from its [releases](https://github.com/radkesvat/WaterWall/releases).
 If a future release renames node settings the tunnel may refuse to start; pin a
-known-good version with `--version v1.5.42` (both installers accept it).
+known-good version on the exit with `--version v1.5.42`.
+
+You normally never have to pin it twice: the exit records the build it installed,
+the join token carries it, and the middle container installs exactly that tag -
+so the two sides cannot drift onto incompatible tunnel wire formats.
 
 ---
 

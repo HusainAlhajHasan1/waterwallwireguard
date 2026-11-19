@@ -234,7 +234,7 @@ kv_get() {
 # A join token is a URL-safe base64 blob of KEY=VALUE lines. It carries
 # everything the middle server needs to build a byte-identical tunnel profile,
 # so the whole deployment is two copy/paste commands.
-TOKEN_KEYS="V MODE EXIT_HOST PORT PORT2 SNI COVER COVER_PORT SECRET TLS_VERIFY EXIT_WG_PORT EXIT_PUB MID_PUB MID_PRIV CREATED"
+TOKEN_KEYS="V MODE EXIT_HOST PORT PORT2 SNI COVER COVER_PORT SECRET TLS_VERIFY EXIT_WG_PORT EXIT_PUB MID_PUB MID_PRIV WW_VERSION CREATED"
 
 token_create() {
     # Uses the current values of $TOKEN_KEYS (exported or local -v).

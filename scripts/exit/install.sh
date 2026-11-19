@@ -64,7 +64,7 @@ Options:
                           the middle public key here with --middle-pubkey)
   --join TOKEN            Re-apply a previously issued join token (idempotent)
   --info                  Print the current configuration and join token, exit
-  --version TAG           Pin a WaterWall release (default: latest)
+  --version TAG           Pin a WaterWall release, e.g. v1.5.42 (default: latest)
   -h, --help              This help
 
 Environment: WW_JOIN, WATERWALL_VERSION, WW_REPO, WW_REF
@@ -179,6 +179,7 @@ print_summary() {
     fi
     printf '  WireGuard server : %s (127.0.0.1:%s, never exposed)\n' "$EXIT_TUN_IP" "$EXIT_WG_PORT"
     printf '  Middle public key: %s\n' "${MID_WG_PUB:-<not set yet>}"
+    printf '  WaterWall build  : %s\n' "${WW_VERSION:-latest}"
     printf '  State file       : %s\n' "$WW_STATE_FILE"
     if [[ "$MODE" != reality ]]; then
         printf '\n  Firewall to allow on this VPS: tcp/%s' "$PORT"
@@ -216,7 +217,16 @@ fi
 EXT_IF="${EXT_IF:-$(default_interface)}"
 ok "Exit public address: $EXIT_HOST (interface $EXT_IF)"
 
+# Keep the build stable across re-runs: --version wins, otherwise the version
+# recorded in the state file is reused.
+if [[ "$WATERWALL_VERSION" == "latest" && -n "${WW_VERSION:-}" ]]; then
+    WATERWALL_VERSION="$WW_VERSION"
+fi
 ww_install_binary
+# The middle must run the same build - the tunnel wire format (Reality v2 in
+# particular) is not compatible between releases. The version travels in the
+# join token, so both sides always agree.
+[[ -n "${WW_INSTALLED_VERSION:-}" ]] && WW_VERSION="$WW_INSTALLED_VERSION"
 
 # ------------------------------------------------------------------ keys ---
 gen_wg_keypair() {   # sets WG_PRIV / WG_PUB
@@ -263,6 +273,7 @@ kv_save "$WW_STATE_FILE" \
     "EXIT_WG_PORT=$EXIT_WG_PORT" \
     "EXIT_WG_PRIV=$EXIT_WG_PRIV" \
     "EXIT_WG_PUB=$EXIT_WG_PUB" \
+    "WW_VERSION=${WW_VERSION:-}" \
     "MID_WG_PUB=$MID_WG_PUB" \
     "MID_WG_PRIV=$MID_WG_PRIV" \
     "EXT_IF=$EXT_IF" \

@@ -50,6 +50,21 @@ ww_download_url() {
     fi
 }
 
+ww_normalize_tag() {
+    # Release tags carry a "v" prefix (v1.5.42); the binary may print it without.
+    local v="${1:-}"
+    [[ -n "$v" ]] || return 0
+    [[ "$v" == v* ]] || v="v$v"
+    printf '%s' "$v"
+}
+
+ww_binary_version() {
+    # "Waterwall version 1.5.42" -> v1.5.42 ; empty when it cannot be parsed.
+    local bin="${1:-$WW_OPT/Waterwall}" raw
+    raw="$("$bin" --version 2>/dev/null | awk '{print $NF}' | head -1)"
+    ww_normalize_tag "$raw"
+}
+
 ww_install_binary() {
     local arch asset url tmp zip binary
     arch="$(detect_arch)"
@@ -59,6 +74,7 @@ ww_install_binary() {
     mkdir -p "$WW_OPT" "$WW_OPT/libs" "$WW_ETC" "$WW_VAR" "$WW_LOG"
 
     if [[ -x "$binary" ]] && "$binary" --version >/dev/null 2>&1; then
+        WW_INSTALLED_VERSION="$(ww_binary_version "$binary")"
         ok "WaterWall core already installed ($("$binary" --version 2>/dev/null | head -1))"
         return 0
     fi
@@ -96,6 +112,7 @@ ww_install_binary() {
         rm -rf "$tmp"
         "$binary" --version >/dev/null 2>&1 || die "The WaterWall binary does not run on this CPU."
     fi
+    WW_INSTALLED_VERSION="$(ww_binary_version "$binary")"
     ok "WaterWall installed: $("$binary" --version 2>/dev/null | head -1)"
 }
 

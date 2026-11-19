@@ -249,6 +249,7 @@ kv_save "$WW_STATE_FILE" \
     "TLS_VERIFY=${TLS_VERIFY:-false}" \
     "EXIT_WG_PUB=${EXIT_WG_PUB:-}" \
     "EXIT_WG_PORT=${EXIT_WG_PORT:-51820}" \
+    "WW_VERSION=${WW_VERSION:-}" \
     "WG_PORT=$WG_PORT" \
     "LOCAL_UDP_PORT=$LOCAL_UDP_PORT" \
     "WG0_PRIV=$WG0_PRIV" \
@@ -261,7 +262,16 @@ printf '%s\n' "$WG1_PUB" > /etc/waterwall/middle-pubkey.txt 2>/dev/null || {
     mkdir -p /etc/waterwall; printf '%s\n' "$WG1_PUB" > /etc/waterwall/middle-pubkey.txt; }
 
 # ------------------------------------------------------------ WaterWall ----
+# Use the exact WaterWall build the exit reported, so the two sides cannot
+# drift apart on a protocol change.
+if [[ -n "${WW_VERSION:-}" && "${WW_VERSION}" != "latest" ]]; then
+    if [[ "${WATERWALL_VERSION:-latest}" == "latest" ]]; then
+        export WATERWALL_VERSION="$WW_VERSION"
+    fi
+    info "WaterWall build from the join token: ${WW_VERSION} (installing: $WATERWALL_VERSION)"
+fi
 ww_install_binary
+[[ -n "${WW_INSTALLED_VERSION:-}" ]] && WW_VERSION="$WW_INSTALLED_VERSION"
 
 export WW_ROLE=middle WW_MODE="$MODE" WW_PORT="$PORT" WW_PORT2="${PORT2:-}"
 export WW_EXIT_HOST="$EXIT_HOST" WW_SNI="${SNI:-}" WW_COVER="${COVER:-}" WW_COVER_PORT="${COVER_PORT:-443}"

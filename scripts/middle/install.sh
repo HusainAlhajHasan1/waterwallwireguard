@@ -375,10 +375,10 @@ fi
 
 if [[ -n "$DASH_DOMAIN" ]]; then
     DASH_URL="https://$DASH_DOMAIN"
-    DASH_URL_LOCAL="http://$CT_ADDR"
+    DASH_FALLBACK="http://$CT_ADDR:8080   (only if the certificate failed)"
 else
     DASH_URL="http://$CT_ADDR:8080"
-    DASH_URL_LOCAL="$DASH_URL"
+    DASH_FALLBACK=""
 fi
 
 banner "Middle server is ready"
@@ -390,7 +390,8 @@ cat <<EOF
   Middle public key: ${MID_PUB:-unknown}
   Dashboard        : $DASH_URL
                      user: $DASH_USER
-                     pass: $DASH_PASS
+                     pass: $DASH_PASS${DASH_FALLBACK:+
+                     fallback: $DASH_FALLBACK}
   Container root   : password $ROOT_PASS   (pct console $VMID)
 
 ${C_BOLD}Router (your home router) - forward these to $CT_ADDR:${C_RESET}
