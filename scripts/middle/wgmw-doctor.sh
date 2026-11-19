@@ -103,9 +103,11 @@ fi
 # ----------------------------------------------------------- public address ---
 hdr "public address"
 PUB=""
-for svc in https://ifconfig.me/ip https://api.ipify.org https://icanhazip.com; do
+for svc in https://api.ipify.org https://icanhazip.com https://ifconfig.me/ip; do
     PUB="$(curl -fsS --max-time 6 "$svc" 2>/dev/null | tr -d '[:space:]')"
-    [[ -n "$PUB" ]] && break
+    # only accept something that really looks like an address (some services
+    # answer with an HTML error page)
+    [[ "$PUB" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && break || PUB=""
 done
 EP=""
 [[ -f "$CONF" ]] && EP="$(grep -o '"public_endpoint"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONF" 2>/dev/null \
@@ -127,5 +129,11 @@ case "$PUB" in
         bad "that address is carrier-grade NAT (100.64.0.0/10) - port forwarding cannot work"
         ;;
 esac
+# Same check the other way round: if the router's own WAN address differs from
+# what the internet sees, the ISP is translating (CGNAT/DS-Lite) and inbound
+# port forwarding cannot work. Compare it on the router's status page.
+PUB6="$(curl -6 -fsS --max-time 6 https://api64.ipify.org 2>/dev/null | tr -d '[:space:]')"
+[[ -n "$PUB6" ]] && say "IPv6 (this host): $PUB6" \
+    || say "IPv6 (this host): none - if your ISP only offers DS-Lite, ask about a public IPv4"
 
 printf '\n'
