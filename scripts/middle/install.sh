@@ -376,6 +376,7 @@ done
 pct push "$VMID" "$REPO_ROOT/scripts/middle/middle-routes.sh" /root/ww-setup/middle-routes.sh -perms 0755
 pct push "$VMID" "$REPO_ROOT/scripts/middle/wgmw-doctor.sh" /root/ww-setup/wgmw-doctor.sh -perms 0755
 pct push "$VMID" "$REPO_ROOT/scripts/middle/container-install.sh" /root/ww-setup/container-install.sh -perms 0755
+pct push "$VMID" "$REPO_ROOT/scripts/relay/wgmw-relay.py" /root/ww-setup/wgmw-relay.py -perms 0755
 
 # ------------------------------------------------------------ run it ------
 log "Installing WireGuard, WaterWall and the dashboard inside container $VMID"
@@ -435,9 +436,26 @@ cat <<EOF
                      fallback: $DASH_FALLBACK}
   Container root   : password $ROOT_PASS   (pct console $VMID)
 
+EOF
+
+if [[ "${ENTRY:-home}" == vps ]]; then
+cat <<EOF
+
+${C_BOLD}Router:${C_RESET} nothing to forward. Clients connect to the exit server instead and
+the tunnel carries them here:
+
+  ${C_GREEN}udp/${ENTRY_PORT:-51820} on $EXIT_HOST${C_RESET}   <- the endpoint in the client configs
+
+Your home line only makes outbound connections, so CGNAT, a router that drops
+inbound UDP, or a changing public IP no longer matter.
+EOF
+else
+cat <<EOF
+
 ${C_BOLD}Router (your home router) - forward these to $CT_ADDR:${C_RESET}
 
   udp/$WG_PORT   -> $CT_ADDR:$WG_PORT     ${C_GREEN}REQUIRED${C_RESET} (this is what clients connect to)
+
 EOF
 
 if [[ -z "${PUBLIC_ADDR:-}" ]]; then
@@ -457,6 +475,7 @@ cat <<EOF
   arriving means the rule, the address or your ISP (CGNAT) is the problem.
 
 EOF
+fi
 if [[ -n "$DASH_DOMAIN" ]]; then
 cat <<EOF
   tcp/80         -> $CT_ADDR:80           ${C_YELLOW}optional${C_RESET} (dashboard HTTPS + certificate renewal)

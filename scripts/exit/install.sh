@@ -12,6 +12,11 @@
 #   * NAT/forwarding so traffic leaving the tunnel goes out to the internet
 #   * a firewall (tunnel port open, WireGuard port closed to the world)
 #
+# With --entry vps the server also accepts the clients' WireGuard packets on
+# udp/51820 and hands them to the middle over a relay connection, for home
+# lines that cannot receive inbound udp (carrier-grade NAT, a router that drops
+# it, no port forward).
+#
 # It is idempotent: re-running keeps the existing secrets and configuration.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -28,10 +33,13 @@ WG_TUN_NET="10.9.0.0/24"         # subnet of the middle<->exit WireGuard link
 EXIT_TUN_IP="10.9.0.1"
 MIDDLE_TUN_IP="10.9.0.2"
 EXIT_WG_PORT_DEFAULT=51820
+ENTRY_DEFAULT="home"
+RELAY_PORT_DEFAULT=7000
 SNI_DEFAULT="www.cloudflare.com"
 
 # CLI values (empty = "not given", so the stored value or the default wins)
-MODE_CLI=""; PORT_CLI=""; PORT2_CLI=""; SNI_CLI=""; COVER_CLI=""
+MODE_CLI=""; PORT_CLI=""; PORT2_CLI=""; SNI_CLI=""; COVER_CLI=""; ENTRY_CLI=""
+ENTRY_PORT_CLI=""; RELAY_PORT_CLI=""
 DOMAIN_CLI=""; EMAIL_CLI=""; EXITHOST_CLI=""; MIDPUB_CLI=""
 JOIN="${WW_JOIN:-}"
 MANUAL_KEYS=0
@@ -45,6 +53,11 @@ Usage:
   bash install-exit.sh [options]
 
 Options:
+  --entry WHERE           Where clients connect: home (default, forward udp/51820
+                          to the middle) | vps (this server accepts them and
+                          relays over the tunnel)
+  --entry-port PORT       Port clients use with --entry vps (default 51820)
+  --relay-port PORT       Port the middle connects to with --entry vps (default 7000)
   --mode MODE             Tunnel mode: halfduplex | split | reality
                           (default: halfduplex)
   --port PORT             Tunnel TCP port on this VPS (default: 443)
@@ -74,6 +87,9 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --mode)          MODE_CLI="$2"; shift 2 ;;
+        --entry)         ENTRY_CLI="$2"; shift 2 ;;
+        --entry-port)    ENTRY_PORT_CLI="$2"; shift 2 ;;
+        --relay-port)    RELAY_PORT_CLI="$2"; shift 2 ;;
         --port)          PORT_CLI="$2"; shift 2 ;;
         --port2)         PORT2_CLI="$2"; shift 2 ;;
         --sni)           SNI_CLI="$2"; shift 2 ;;
@@ -122,6 +138,9 @@ fi
 : "${MID_WG_PUB:=}"
 : "${MID_WG_PRIV:=}"
 : "${EMAIL:=}"
+: "${ENTRY:=$ENTRY_DEFAULT}"
+: "${ENTRY_PORT:=$EXIT_WG_PORT}"
+: "${RELAY_PORT:=$RELAY_PORT_DEFAULT}"
 
 if [[ -n "$JOIN" ]]; then
     token_parse "$JOIN" || die "The join token could not be decoded - copy it again, exactly as printed."
@@ -136,6 +155,9 @@ fi
 [[ -n "$DOMAIN_CLI" ]]    && TUNNEL_DOMAIN="$DOMAIN_CLI"
 [[ -n "$EMAIL_CLI" ]]     && EMAIL="$EMAIL_CLI"
 [[ -n "$EXITHOST_CLI" ]]  && EXIT_HOST="$EXITHOST_CLI"
+[[ -n "$ENTRY_CLI" ]]     && ENTRY="$ENTRY_CLI"
+[[ -n "$ENTRY_PORT_CLI" ]] && ENTRY_PORT="$ENTRY_PORT_CLI"
+[[ -n "$RELAY_PORT_CLI" ]] && RELAY_PORT="$RELAY_PORT_CLI"
 [[ -z "$COVER" ]]         && COVER="$SNI"
 [[ -z "$CREATED" ]]       && CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -143,6 +165,12 @@ case "$MODE" in
     halfduplex|split|reality) ;;
     *) die "--mode must be one of: $WW_MODES (got: $MODE)" ;;
 esac
+case "$ENTRY" in
+    home|vps) ;;
+    *) die "--entry must be home or vps (got: $ENTRY)" ;;
+esac
+is_port "$ENTRY_PORT" || die "the client entry port must be a valid port (got: $ENTRY_PORT)"
+is_port "$RELAY_PORT" || die "the relay port must be a valid port (got: $RELAY_PORT)"
 if [[ "$MODE" == split && -z "$PORT2" ]]; then
     PORT2="$((PORT + 1))"
 fi
@@ -178,12 +206,21 @@ print_summary() {
         fi
     fi
     printf '  WireGuard server : %s (127.0.0.1:%s, never exposed)\n' "$EXIT_TUN_IP" "$EXIT_WG_PORT"
+    if [[ "$ENTRY" == vps ]]; then
+        printf '  Client entry     : this server, udp/%s (relayed to the middle)\n' "$ENTRY_PORT"
+        printf '  Relay for middle : tcp/%s\n' "$RELAY_PORT"
+    else
+        printf '  Client entry     : your home line, udp/%s forwarded to the middle\n' "$EXIT_WG_PORT"
+    fi
     printf '  Middle public key: %s\n' "${MID_WG_PUB:-<not set yet>}"
     printf '  WaterWall build  : %s\n' "${WW_VERSION:-latest}"
     printf '  State file       : %s\n' "$WW_STATE_FILE"
     if [[ "$MODE" != reality ]]; then
         printf '\n  Firewall to allow on this VPS: tcp/%s' "$PORT"
         [[ "$MODE" == split ]] && printf ' and tcp/%s' "$PORT2"
+        if [[ "$ENTRY" == vps ]]; then
+            printf ', udp/%s, tcp/%s' "$ENTRY_PORT" "$RELAY_PORT"
+        fi
         printf '  (+ tcp/80 while certificates renew)\n'
     else
         printf '\n  Firewall to allow on this VPS: tcp/%s\n' "$PORT"
@@ -277,6 +314,9 @@ kv_save "$WW_STATE_FILE" \
     "MID_WG_PUB=$MID_WG_PUB" \
     "MID_WG_PRIV=$MID_WG_PRIV" \
     "EXT_IF=$EXT_IF" \
+    "ENTRY=$ENTRY" \
+    "ENTRY_PORT=$ENTRY_PORT" \
+    "RELAY_PORT=$RELAY_PORT" \
     "CREATED=$CREATED"
 ok "state saved to $WW_STATE_FILE"
 
@@ -343,6 +383,9 @@ ACTION="\${1:-up}"
 EXT_IF="\${EXT_IF:-$EXT_IF}"
 TUNNEL_PORTS="$TUNNEL_PORTS"
 WG_PORT="$EXIT_WG_PORT"
+ENTRY="$ENTRY"
+ENTRY_PORT="$ENTRY_PORT"
+RELAY_PORT="$RELAY_PORT"
 
 ipt() { local t="\$1"; shift; if [[ "\$t" == filter ]]; then iptables "\$@"; else iptables -t "\$t" "\$@"; fi; }
 ensure_chain() { local t="\$1" c="\$2"; ipt "\$t" -n -L "\$c" >/dev/null 2>&1 || ipt "\$t" -N "\$c" 2>/dev/null || true; }
@@ -364,8 +407,14 @@ up() {
     for p in \$TUNNEL_PORTS; do ipt filter -A WWEXIT_IN -p tcp --dport "\$p" -j ACCEPT; done
     ipt filter -A WWEXIT_IN -p tcp --dport 80 -j ACCEPT      # certificate renewals
     ipt filter -A WWEXIT_IN -p tcp --dport 22 -j ACCEPT      # ssh
-    # the WireGuard socket must never be reachable from the internet
-    ipt filter -A WWEXIT_IN -p udp --dport "\$WG_PORT" ! -i lo -j DROP
+    if [[ "\$ENTRY" == vps ]]; then
+        # clients arrive here and are relayed to the middle over the tunnel
+        ipt filter -A WWEXIT_IN -p udp --dport "\$ENTRY_PORT" -j ACCEPT
+        ipt filter -A WWEXIT_IN -p tcp --dport "\$RELAY_PORT" -j ACCEPT
+    else
+        # the WireGuard socket must never be reachable from the internet
+        ipt filter -A WWEXIT_IN -p udp --dport "\$WG_PORT" ! -i lo -j DROP
+    fi
 
     # --- forwarding ---------------------------------------------------------
     ipt filter -A WWEXIT_FWD -i wg0 -o "\$EXT_IF" -j ACCEPT
@@ -434,6 +483,47 @@ systemctl daemon-reload
 systemctl enable ww-firewall.service >/dev/null 2>&1 || true
 /usr/local/bin/ww-firewall up
 ok "firewall active: tcp/${TUNNEL_PORTS// /,} open, udp/$EXIT_WG_PORT closed to the world"
+
+# ------------------------------------------------------------------ relay ---
+if [[ "$ENTRY" == vps ]]; then
+    log "Installing the client entry relay (clients connect to this server)"
+    install -m 0755 "$SELF_DIR/../relay/wgmw-relay.py" /usr/local/bin/wgmw-relay
+    RELAY_SECRET_FILE="$WW_ETC/relay.secret"
+    mkdir -p "$WW_ETC"
+    ( umask 077; relay_secret_from "$SECRET" > "$RELAY_SECRET_FILE" )
+    cat > /etc/systemd/system/wgmw-relay.service <<UNIT
+[Unit]
+Description=waterwallwireguard client entry relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wgmw-relay server --listen auto:$ENTRY_PORT --control 0.0.0.0:$RELAY_PORT --secret-file $RELAY_SECRET_FILE
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable wgmw-relay.service >/dev/null 2>&1 || true
+    systemctl restart wgmw-relay.service
+    sleep 1
+    if systemctl is-active --quiet wgmw-relay.service; then
+        ok "relay up: clients on udp/$ENTRY_PORT, middle on tcp/$RELAY_PORT"
+    else
+        service_dump wgmw-relay.service
+        warn "The relay did not start - clients will not reach the middle."
+    fi
+else
+    systemctl disable --now wgmw-relay.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/wgmw-relay.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 
 # --------------------------------------------------------------- WireGuard --
 log "Writing the exit WireGuard server (loopback only)"

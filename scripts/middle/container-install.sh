@@ -260,6 +260,9 @@ kv_save "$WW_STATE_FILE" \
     "EXIT_WG_PUB=${EXIT_WG_PUB:-}" \
     "EXIT_WG_PORT=${EXIT_WG_PORT:-51820}" \
     "WW_VERSION=${WW_VERSION:-}" \
+    "ENTRY=${ENTRY:-home}" \
+    "ENTRY_PORT=${ENTRY_PORT:-51820}" \
+    "RELAY_PORT=${RELAY_PORT:-7000}" \
     "WG_PORT=$WG_PORT" \
     "LOCAL_UDP_PORT=$LOCAL_UDP_PORT" \
     "WG0_PRIV=$WG0_PRIV" \
@@ -318,6 +321,49 @@ fi
 systemctl restart wgmw-routing.service
 ok "wg0 (clients, udp/$WG_PORT) and wg1 (tunnel) are up"
 
+# ------------------------------------------------------------------ relay ---
+# When the exit accepts the clients (the home line cannot), this container
+# keeps an outbound connection to it and feeds wg0 through it - no inbound
+# port on the home side at all.
+if [[ "${ENTRY:-home}" == vps ]]; then
+    log "Wiring the client entry relay towards $EXIT_HOST:${RELAY_PORT:-7000}"
+    install -m 0755 "$SELF_DIR/wgmw-relay.py" /usr/local/bin/wgmw-relay \
+        || die "wgmw-relay.py is missing next to this script ($SELF_DIR)."
+    RELAY_SECRET_FILE=/etc/waterwall/relay.secret
+    mkdir -p /etc/waterwall
+    ( umask 077; relay_secret_from "${SECRET:-}" > "$RELAY_SECRET_FILE" )
+    cat > /etc/systemd/system/wgmw-relay.service <<UNIT
+[Unit]
+Description=waterwallwireguard client entry relay
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target wg-quick@wg0.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wgmw-relay client --server $EXIT_HOST:${RELAY_PORT:-7000} --target 127.0.0.1:$WG_PORT --secret-file $RELAY_SECRET_FILE
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable wgmw-relay.service >/dev/null 2>&1 || true
+    systemctl restart wgmw-relay.service
+    sleep 2
+    if systemctl is-active --quiet wgmw-relay.service; then
+        ok "relay connected to $EXIT_HOST - clients reach wg0 through it"
+    else
+        service_dump wgmw-relay.service
+        warn "The relay did not come up - clients will not reach this container."
+    fi
+else
+    systemctl disable --now wgmw-relay.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/wgmw-relay.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
 # ------------------------------------------------------------- dashboard ---
 export WGDASH_DIR=/opt/wireguard-dashboard
 export WGDASH_SRC=/opt/wgdash-src
@@ -372,7 +418,9 @@ endpoint_of() {
     printf '%s:%s' "$host" "$port"
 }
 
-if [[ -n "$PUBLIC_HOST" ]]; then
+if [[ "${ENTRY:-home}" == vps ]]; then
+    ENDPOINT="$(endpoint_of "$EXIT_HOST" "${ENTRY_PORT:-51820}")"
+elif [[ -n "$PUBLIC_HOST" ]]; then
     ENDPOINT="$(endpoint_of "$PUBLIC_HOST" "$WG_PORT")"
 else
     DETECTED="$(detect_public_ipv4 || true)"

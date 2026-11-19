@@ -80,6 +80,10 @@ through the exit.
 # middle: choose the container address / size / the client UDP port
 ... install-middle.sh | sudo bash -s -- --join '<token>' \
     --ip 192.168.1.240/24 --cores 2 --memory 1024 --disk 8 --wg-port 51820
+
+# exit server: clients connect to the VPS instead of your home line
+# (use this when your home connection cannot receive inbound UDP at all)
+... install-exit.sh | bash -s -- --entry vps
 ```
 
 > `--join '<token>'` also works as `WW_JOIN='<token>'` in front of the command,
@@ -92,6 +96,10 @@ through the exit.
 ## 2. Ports, IPs and domains — what to open, what to create
 
 ### 2.1 Your home router (this is what clients connect to)
+
+> **Only needed with the default `--entry home`.** If you installed the exit
+> server with `--entry vps`, clients connect to the VPS and **nothing** has to be
+> forwarded on the router — skip to 2.2.
 
 | Rule | Protocol | External port | Forward to (the LXC) | Needed? |
 |---|---|---|---|---|
@@ -116,11 +124,18 @@ through the exit.
 | Let's Encrypt renewals | TCP | `80` | only with `--tunnel-domain` |
 | SSH | TCP | `22` | for you |
 
+With `--entry vps` these come in addition:
+
+| Rule | Protocol | Port | Needed? |
+|---|---|---|---|
+| Clients' WireGuard | **UDP** | `51820` (`--entry-port`) | with `--entry vps` |
+| Relay from the middle | **TCP** | `7000` (`--relay-port`) | with `--entry vps` |
+
 The installer creates the `ww-firewall` rules on the VPS itself, **but a cloud
 firewall (Hetzner console → Firewall) must be opened separately**: add rules for
-the ports above to the firewall attached to the server. UDP `51820` on the VPS is
-deliberately **closed** — that WireGuard socket only listens on `127.0.0.1` and
-is reachable exclusively through the tunnel.
+the ports above to the firewall attached to the server. With `--entry home` UDP
+`51820` on the VPS is deliberately **closed** — that WireGuard socket only
+listens on `127.0.0.1` and is reachable exclusively through the tunnel.
 
 ### 2.3 Domains — which one needs a domain?
 
@@ -286,6 +301,42 @@ address the router does not know about is a common silent failure - add a DHCP
 reservation for the container's MAC), and as a last test set the router's DMZ
 host to the container for one minute.
 
+### When your home line cannot accept inbound UDP at all
+
+Some routers simply never pass inbound UDP (they forward TCP fine, they even
+have a DMZ configured — and the packets still never arrive), and some ISPs put
+you behind CGNAT. Both make `--entry home` impossible, and no rule can fix it.
+
+Install the exit server with the clients pointed at **it** instead:
+
+```bash
+# on the VPS
+... install-exit.sh | bash -s -- --entry vps
+
+# then the normal middle install with the token it prints
+```
+
+How it works:
+
+```
+phone --udp/51820--> VPS (entry relay) <--tcp/7000, opened by the middle-- LXC --> wg0
+```
+
+* The VPS accepts the clients' WireGuard packets and forwards them down a
+  connection the **middle** opens, so your home line only ever makes outbound
+  connections. CGNAT, a blocking router and a changing public IP stop mattering.
+* Each remote client gets its own socket towards `wg0` on the middle, so
+  handshakes and sessions stay separate (that is the part a naive relay gets
+  wrong).
+* The relay authenticates with a key derived from the tunnel secret; nothing new
+  travels in the join token. Traffic is WireGuard ciphertext end to end — the VPS
+  never sees plaintext.
+* Cost: every packet crosses the tunnel twice (in and out), so the VPS sees
+  roughly double the traffic and the round trip grows by one hop. For a handful
+  of devices that is unnoticeable.
+* Check it with `wgmw-doctor` on the middle: it reports the relay and tells you
+  what the client endpoint must be.
+
 ### When your ISP uses CGNAT
 
 The test is the **router's own WAN address**, not a traceroute hop: if that
@@ -335,6 +386,9 @@ Everything the installers generate:
 | `/etc/wireguard/wg1.conf` | middle only: WireGuard client towards the exit |
 | `/usr/local/bin/wgmw-routes` | middle policy routing (`wg0` → `wg1`, MSS clamp) |
 | `/usr/local/bin/ww-firewall` | exit firewall/NAT (idempotent, `up`/`down`) |
+| `/usr/local/bin/wgmw-relay` | client entry relay (`server` on the exit, `client` on the middle, `--entry vps` only) |
+| `/etc/systemd/system/wgmw-relay.service` | the relay unit (automatic restart, 3–5 s backoff) |
+| `/etc/waterwall/relay.secret` | relay key, derived from the tunnel secret, mode `600` |
 | `/usr/local/bin/ww-health` + `ww-health.timer` | middle tunnel watchdog |
 | `/opt/waterwall/Waterwall` | the WaterWall core binary |
 | `/opt/wireguard-dashboard` | the dashboard (installed by its own installer) |

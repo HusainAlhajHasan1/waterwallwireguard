@@ -234,7 +234,7 @@ kv_get() {
 # A join token is a URL-safe base64 blob of KEY=VALUE lines. It carries
 # everything the middle server needs to build a byte-identical tunnel profile,
 # so the whole deployment is two copy/paste commands.
-TOKEN_KEYS="V MODE EXIT_HOST PORT PORT2 SNI COVER COVER_PORT SECRET TLS_VERIFY EXIT_WG_PORT EXIT_PUB MID_PUB MID_PRIV WW_VERSION CREATED"
+TOKEN_KEYS="V MODE EXIT_HOST PORT PORT2 SNI COVER COVER_PORT SECRET TLS_VERIFY EXIT_WG_PORT EXIT_PUB MID_PUB MID_PRIV WW_VERSION ENTRY ENTRY_PORT RELAY_PORT CREATED"
 
 token_create() {
     # Uses the current values of $TOKEN_KEYS (exported or local -v).
@@ -271,6 +271,9 @@ token_from_state() {
     MID_PUB="${MID_WG_PUB:-}"
     MID_PRIV="${MID_WG_PRIV:-}"
     EXIT_WG_PORT="${EXIT_WG_PORT:-51820}"
+    ENTRY="${ENTRY:-home}"
+    ENTRY_PORT="${ENTRY_PORT:-$EXIT_WG_PORT}"
+    RELAY_PORT="${RELAY_PORT:-7000}"
 }
 
 token_to_state() {
@@ -278,6 +281,15 @@ token_to_state() {
     MID_WG_PUB="${MID_PUB:-}"
     MID_WG_PRIV="${MID_PRIV:-}"
     EXIT_WG_PORT="${EXIT_WG_PORT:-51820}"
+    ENTRY="${ENTRY:-home}"
+    ENTRY_PORT="${ENTRY_PORT:-$EXIT_WG_PORT}"
+    RELAY_PORT="${RELAY_PORT:-7000}"
+}
+
+# The relay authenticates with a secret derived from the tunnel secret, so it
+# never has to travel in a join token: both sides compute the same value.
+relay_secret_from() {
+    printf '%s' "wgmw-relay:$1" | sha256sum | cut -d' ' -f1
 }
 
 # ---------------------------------------------------------------- packages ---
