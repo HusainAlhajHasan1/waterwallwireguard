@@ -230,11 +230,25 @@ ok "Template: $TEMPLATE_SPEC"
 
 # ------------------------------------------------------------- container ---
 if [[ -z "$VMID" ]]; then
+    # A container this installer created before (same hostname) is reconfigured
+    # instead of creating a second one on the next free ID.
+    while read -r id; do
+        [[ "$id" =~ ^[0-9]+$ ]] || continue
+        if [[ "$(pct config "$id" 2>/dev/null | awk -F': ' '/^hostname/ {print $2; exit}')" == "$CT_HOSTNAME" ]]; then
+            VMID="$id"
+            REUSED_AUTO=1
+            info "Found the container this installer created earlier: $VMID ($CT_HOSTNAME)"
+            break
+        fi
+    done < <(pct list 2>/dev/null | awk 'NR > 1 {print $1}')
+fi
+if [[ -z "$VMID" ]]; then
     VMID="$(pvesh get /cluster/nextid 2>/dev/null || true)"
     [[ -n "$VMID" ]] || die "Could not determine the next free container ID; pass --vmid."
 fi
 [[ "$VMID" =~ ^[0-9]+$ ]] || die "--vmid must be numeric."
 
+REUSED_AUTO="${REUSED_AUTO:-0}"
 CT_EXISTS=0
 if pct status "$VMID" >/dev/null 2>&1; then
     CT_EXISTS=1
@@ -289,15 +303,36 @@ for m in wireguard iptable_nat iptable_mangle xt_MASQUERADE nf_conntrack; do
     modprobe "$m" 2>/dev/null || true
 done
 
+# pct conf edits need /etc/pve/lxc; on a cluster member the config lives in
+# the pmxcfs anyway. Refuse to touch a file we cannot write instead of dying
+# with a shell error.
+pve_conf_path() {
+    local id="$1"
+    if [[ -d /etc/pve/lxc ]]; then
+        printf '/etc/pve/lxc/%s.conf' "$id"
+    elif [[ -d /var/lib/lxc ]]; then
+        printf '/var/lib/lxc/%s/config' "$id"
+    fi
+}
+
+append_conf_line() {   # append_conf_line <conf> <key> <line>
+    local conf="$1" key="$2" line="$3"
+    [[ -n "$conf" && -f "$conf" ]] || return 1
+    grep -q "^$key" "$conf" && return 0
+    printf '%s\n' "$line" >> "$conf" 2>/dev/null || return 1
+    return 0
+}
+
 log "Checking that the container may create WireGuard interfaces"
 if pct exec "$VMID" -- bash -c 'ip link add wgprobe0 type wireguard 2>/dev/null && ip link del wgprobe0 2>/dev/null' ; then
     ok "WireGuard interfaces are allowed inside the container"
 else
     if [[ $UNPRIVILEGED -eq 1 ]]; then
         warn "WireGuard interface creation is blocked - relaxing the AppArmor profile of container $VMID"
-        CONF="/etc/pve/lxc/$VMID.conf"
-        if ! grep -q '^lxc.apparmor.profile' "$CONF"; then
-            printf 'lxc.apparmor.profile: lxc-container-default-cgns\n' >> "$CONF"
+        CONF="$(pve_conf_path "$VMID")"
+        if ! append_conf_line "$CONF" "lxc.apparmor.profile" "lxc.apparmor.profile: lxc-container-default-cgns"; then
+            warn "Could not edit the container config by hand - set it manually:"
+            hint "  lxc.apparmor.profile: lxc-container-default-cgns   (in the config of container $VMID)"
         fi
         pct stop "$VMID" >/dev/null 2>&1 || true
         pct start "$VMID"
@@ -314,9 +349,10 @@ fi
 log "Checking that the container may enable IP forwarding"
 if [[ "$(pct exec "$VMID" -- sh -c 'sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; cat /proc/sys/net/ipv4/ip_forward' 2>/dev/null | tr -d '\r')" != "1" ]]; then
     warn "IP forwarding is read-only inside the container - adding proc/sys mounts"
-    CONF="/etc/pve/lxc/$VMID.conf"
-    if ! grep -q '^lxc.mount.auto' "$CONF"; then
-        printf 'lxc.mount.auto: proc:rw sys:rw\n' >> "$CONF"
+    CONF="$(pve_conf_path "$VMID")"
+    if ! append_conf_line "$CONF" "lxc.mount.auto" "lxc.mount.auto: proc:rw sys:rw"; then
+        warn "Could not edit the container config by hand - try manually:"
+        hint "  lxc.mount.auto: proc:rw sys:rw   (in the config of container $VMID, then restart it)"
     fi
     pct stop "$VMID" >/dev/null 2>&1 || true
     pct start "$VMID"
@@ -368,7 +404,11 @@ if [[ "$IPCONF" == "dhcp" ]]; then
 else
     CT_ADDR="${IPCONF%%/*}"
     if [[ -n "$CT_ADDR_ACTUAL" && "$CT_ADDR_ACTUAL" != "$CT_ADDR" && "$CT_ADDR_ACTUAL" != "$BRIDGE_ADDR" ]]; then
-        warn "Container $VMID actually uses $CT_ADDR_ACTUAL (requested $CT_ADDR) - using the real address."
+        if [[ $REUSED_AUTO -eq 1 ]]; then
+            info "Container $VMID already uses $CT_ADDR_ACTUAL - keeping that address."
+        else
+            warn "Container $VMID actually uses $CT_ADDR_ACTUAL (requested $CT_ADDR) - using the real address."
+        fi
         CT_ADDR="$CT_ADDR_ACTUAL"
     fi
 fi
