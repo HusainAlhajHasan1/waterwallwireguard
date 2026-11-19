@@ -261,6 +261,31 @@ curl -fsSL .../install-middle.sh | sudo bash -s -- --join '<token>'
 | Container has no internet | `pct exec <id> -- ping -c1 1.1.1.1`, check `--nameserver`/gateway on the Proxmox side |
 | `waterwall` exits immediately | `journalctl -u waterwall -n 40`: either the tunnel port is already used (nginx/caddy/xray on 443) or a WaterWall release renamed a node setting |
 
+### Is the forward the problem, or the ISP?
+
+Two rules settle it, one minute each. Forward a **TCP** port first - a TCP
+handshake is unambiguous:
+
+```bash
+# router: TCP 8443 -> <proxmox-host>:8006
+python3 -c "import socket;socket.create_connection(('<public-ip>',8443),5);print('OPEN')"   # run on any outside host
+```
+
+`OPEN` means inbound forwarding works and the ISP is not in the way. Then do the
+same for **UDP**, pointing at the WireGuard container, and watch for the packet:
+
+```bash
+tcpdump -ni vmbr0 -e udp port 51820        # on the proxmox host
+python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);[s.sendto(b'x'*32,('<public-ip>',51820)) for _ in range(5)]"
+```
+
+If the TCP rule works but no UDP packet ever shows up, the UDP rule itself is
+not effective: check that the rule names the internal host **and** an explicit
+public port, that the device exists in the router's device/DHCP list (a static
+address the router does not know about is a common silent failure - add a DHCP
+reservation for the container's MAC), and as a last test set the router's DMZ
+host to the container for one minute.
+
 ### When your ISP uses CGNAT
 
 The test is the **router's own WAN address**, not a traceroute hop: if that
