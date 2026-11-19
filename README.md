@@ -256,17 +256,21 @@ curl -fsSL .../install-middle.sh | sudo bash -s -- --join '<token>'
 | Dashboard unreachable from LAN | in the container: `systemctl status wireguard-dashboard`, `ss -lntp \| grep 8080` |
 | Dashboard HTTPS fails | domain must point to your home IP, `tcp/80` forwarded, `certbot --nginx -d <domain>` again inside the container |
 | Clients cannot connect at all | is `udp/51820` forwarded to the LXC, is `<LXC-IP>:51820` reachable from the LAN (`wg show wg0` lists the port), did your public IP change? |
-| Clients cannot connect **and** `tcpdump -ni any udp port 51820` sees nothing | the packets never reach you: run `wgmw-doctor` - a hop in `100.64.0.0/10` means **CGNAT**, see below |
-| Inbound packets never arrive (CGNAT) | `traceroute -n -m 4 1.1.1.1`: hop 2 in `100.64.0.0/10` means your ISP translates and no port forward can work. Ask the ISP for a public IPv4 (Dual-Stack instead of DS-Lite), or use IPv6, or move the client entry point to the VPS (see below) |
+| Clients cannot connect **and** `tcpdump -ni any udp port 51820` sees nothing | the packets never reach the container: the forward, the public address, or the ISP. Run `wgmw-doctor`, then test the forward with a TCP rule and a DMZ as described below |
+| Inbound packets never arrive (CGNAT) | the router's **WAN address** itself inside `100.64.0.0/10` means the ISP translates and no port forward can work. (A *hop* in that range is usually just the ISP's gateway - it proves nothing.) Ask the ISP for a public IPv4 (Dual-Stack instead of DS-Lite), or use IPv6, or move the client entry point to the VPS (see below) |
 | Container has no internet | `pct exec <id> -- ping -c1 1.1.1.1`, check `--nameserver`/gateway on the Proxmox side |
 | `waterwall` exits immediately | `journalctl -u waterwall -n 40`: either the tunnel port is already used (nginx/caddy/xray on 443) or a WaterWall release renamed a node setting |
 
 ### When your ISP uses CGNAT
 
-If hop 2 of a traceroute is inside `100.64.0.0/10`, your router has no public
-IPv4 of its own - the address an outside host sees belongs to the ISP and is
-shared. Port forwarding cannot work in that situation, no matter how the rule
-is written, and clients will show `rx: 0` forever.
+The test is the **router's own WAN address**, not a traceroute hop: if that
+address (not the gateway after it) is inside `100.64.0.0/10`, the router has no
+public IPv4 of its own - the address an outside host sees belongs to the ISP and
+is shared. Port forwarding cannot work in that situation, no matter how the rule
+is written, and clients will show `rx: 0` forever. ISPs often number their
+gateway out of `100.64.0.0/10` while still giving the router a real public
+address; in that case forwarding is possible and the problem is elsewhere
+(rule not applied, wrong internal host, a firewall on the router).
 
 Options, in order of effort:
 

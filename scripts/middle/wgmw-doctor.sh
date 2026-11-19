@@ -136,23 +136,25 @@ PUB6="$(curl -6 -fsS --max-time 6 https://api64.ipify.org 2>/dev/null | tr -d '[
 [[ -n "$PUB6" ]] && say "IPv6 (this host): $PUB6" \
     || say "IPv6 (this host): none - if your ISP only offers DS-Lite, ask about a public IPv4"
 
-# A hop inside 100.64.0.0/10 before the internet means the ISP is translating
-# (carrier-grade NAT): the forwarding rule on your router can never be reached.
+# A hop inside 100.64.0.0/10 is worth reporting, but it is not proof on its own:
+# many ISPs number their own gateway out of that range while still handing the
+# router a real public address. Only a public address that is itself inside
+# 100.64.0.0/10 (checked above) proves carrier-grade NAT.
 if command -v traceroute >/dev/null 2>&1; then
     HOPS="$(traceroute -n -m 4 -w 1 -q 1 1.1.1.1 2>/dev/null | awk 'NR>1 {print $2}' | head -4)"
     for h in $HOPS; do
         case "$h" in
             100.6[4-9].*|100.[7-9][0-9].*|100.1[0-1][0-9].*|100.12[0-7].*)
-                bad "hop $h is carrier-grade NAT (100.64.0.0/10)"
-                say "  nothing you forward on your router can be reached from outside."
-                say "  ask your ISP for a public IPv4 (Dual-Stack instead of DS-Lite),"
-                say "  or run the client entry point on a public server."
+                say "hop $h is in 100.64.0.0/10 - that is often the ISP's own gateway,"
+                say "  not proof of CGNAT. Compare the router's WAN address with the"
+                say "  public address above: only a WAN address inside that range means"
+                say "  inbound port forwarding cannot work."
                 break
                 ;;
         esac
     done
 else
-    say "install traceroute to have the CGNAT hop checked automatically"
+    say "install traceroute to see whether a hop is in 100.64.0.0/10"
 fi
 
 printf '\n'
