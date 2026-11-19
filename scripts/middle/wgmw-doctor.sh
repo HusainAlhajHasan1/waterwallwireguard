@@ -57,8 +57,10 @@ else
         say "  2. does the client config point at your CURRENT public IP? (see below)"
         say "  3. NAT loopback: a phone on your home Wi-Fi cannot reach your own"
         say "     public IP through most routers - test with mobile data instead"
-        say "  4. on the Proxmox host, watch for packets while the client tries:"
+        say "  4. watch for packets while the client tries (inside the container):"
         say "     tcpdump -ni any udp port $WG_PORT"
+        say "  5. to test the router forward alone, send one packet from outside"
+        say "     (e.g. from the exit VPS) and look for it with the command above:"
     else
         ok "$LIVE peer(s) finished a handshake - the client leg works"
     fi

@@ -439,6 +439,24 @@ ${C_BOLD}Router (your home router) - forward these to $CT_ADDR:${C_RESET}
 
   udp/$WG_PORT   -> $CT_ADDR:$WG_PORT     ${C_GREEN}REQUIRED${C_RESET} (this is what clients connect to)
 EOF
+
+if [[ -z "${PUBLIC_ADDR:-}" ]]; then
+    PUBLIC_ADDR="${PUBLIC_HOST:-}"
+    [[ -n "$PUBLIC_ADDR" ]] || PUBLIC_ADDR="$(detect_public_ipv4 2>/dev/null || true)"
+    [[ -n "$PUBLIC_ADDR" ]] || PUBLIC_ADDR="<your-public-ip>"
+fi
+cat <<EOF
+  The container address above is $CT_ADDR - make sure the router rule points
+  there and not at another address.
+
+  Test the rule from outside your home network (from the VPS, for example):
+    python3 -c "import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.sendto(b'x'*32,('$PUBLIC_ADDR',$WG_PORT))"
+  and watch for it inside the container:
+    tcpdump -ni any udp port $WG_PORT
+  A packet arriving proves the forward and your public IP are right; nothing
+  arriving means the rule, the address or your ISP (CGNAT) is the problem.
+
+EOF
 if [[ -n "$DASH_DOMAIN" ]]; then
 cat <<EOF
   tcp/80         -> $CT_ADDR:80           ${C_YELLOW}optional${C_RESET} (dashboard HTTPS + certificate renewal)
