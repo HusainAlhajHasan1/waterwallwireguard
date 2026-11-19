@@ -294,21 +294,47 @@ apt_install() {
     apt-get install -y -qq --no-install-recommends "${missing[@]}"
 }
 
+has_default_route() {
+    # No dependency on iproute2: /proc/net/route works everywhere.
+    if command -v ip >/dev/null 2>&1; then
+        [[ -n "$(ip -4 route show default 2>/dev/null)" ]]
+    else
+        awk 'NR > 1 && $2 == "00000000" {found = 1} END {exit !found}' /proc/net/route 2>/dev/null
+    fi
+}
+
+net_probe() {
+    # net_probe <host> <port> - plain TCP connect, 5s timeout.
+    # Uses bash's /dev/tcp on purpose: no curl, no CA bundle, nothing to install.
+    local host="$1" port="$2"
+    timeout 5 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null
+}
+
 wait_for_network() {
     # wait_for_network [tries] - 2s between tries (default 30, i.e. ~60s).
-    # A fresh container often needs a few seconds for DNS/route to settle.
-    local tries="${1:-30}" i
+    #
+    # The probe is deliberately dependency-free: on a fresh Debian container
+    # curl and the CA bundle are installed by apt *after* this check, so
+    # probing with curl made a perfectly healthy network look dead.
+    # What apt needs is: a default route, DNS, and TCP to a Debian mirror.
+    local tries="${1:-30}" i why="not checked yet"
     log "Waiting for network connectivity"
     for ((i = 1; i <= tries; i++)); do
-        if curl -fsS --connect-timeout 4 --max-time 8 -o /dev/null https://deb.debian.org/ 2>/dev/null \
-           || curl -fsS --connect-timeout 4 --max-time 8 -o /dev/null https://github.com/ 2>/dev/null; then
+        if ! has_default_route; then
+            why="no default route (DHCP not ready yet?)"
+        elif ! getent hosts deb.debian.org >/dev/null 2>&1; then
+            why="DNS cannot resolve deb.debian.org (check /etc/resolv.conf)"
+        elif ! net_probe deb.debian.org 80; then
+            why="cannot open a TCP connection to deb.debian.org:80"
+        else
             ok "network is up"
             return 0
         fi
         sleep 2
     done
-    warn "No internet after $((tries * 2))s - continuing, package downloads may fail."
-    hint "Check DHCP/DNS inside the container: ip -4 addr ; cat /etc/resolv.conf ; curl -I https://deb.debian.org"
+    warn "No internet after $((tries * 2))s - continuing anyway."
+    hint "Last failed check: $why"
+    hint "Debug: ip -4 route ; cat /etc/resolv.conf ; getent hosts deb.debian.org"
     return 0
 }
 
