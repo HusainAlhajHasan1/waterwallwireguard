@@ -47,7 +47,8 @@ It prints a **JOIN TOKEN** at the end (also saved to
 ### Step 2 — on the Proxmox host (as root)
 
 ```bash
-WW_JOIN='<paste the token>' bash -c "$(curl -fsSL https://raw.githubusercontent.com/HusainAlhajHasan1/waterwallwireguard/main/install-middle.sh)"
+curl -fsSL https://raw.githubusercontent.com/HusainAlhajHasan1/waterwallwireguard/main/install-middle.sh \
+  | sudo bash -s -- --join '<paste the token>'
 ```
 
 This creates the LXC container, installs everything inside it and prints:
@@ -73,13 +74,16 @@ through the exit.
     --tunnel-domain tunnel.example.com --email me@example.com
 
 # middle: panel over HTTPS (needs tcp/80+tcp/443 forwarded to the LXC)
-WW_JOIN='<token>' bash -c "$(curl -fsSL .../install-middle.sh)" -- \
+... install-middle.sh | sudo bash -s -- --join '<token>' \
     --dash-domain panel.example.com --dash-email me@example.com
 
 # middle: choose the container address / size / the client UDP port
-WW_JOIN='<token>' bash -c "$(curl -fsSL .../install-middle.sh)" -- \
+... install-middle.sh | sudo bash -s -- --join '<token>' \
     --ip 192.168.1.240/24 --cores 2 --memory 1024 --disk 8 --wg-port 51820
 ```
+
+> `--join '<token>'` also works as `WW_JOIN='<token>'` in front of the command,
+> which is handy when the shell history should not contain the token.
 
 `install-exit.sh --help` and `install-middle.sh --help` list everything.
 
@@ -160,7 +164,7 @@ join token, so both sides always match.
 | Mode | Transport | Port(s) on the VPS | Certificate | When to use |
 |---|---|---|---|---|
 | `halfduplex` *(default)* | TLS 1.3 + WaterWall **HalfDuplex**: every logical stream is split into one upload and one download TCP connection | 1 (443) | self-signed or real | best default: looks like a normal HTTPS session pair, resists simple traffic analysis |
-| `split` | TLS 1.3 + HalfDuplex with the two directions on **two different ports/services** | 2 (443 + 444) | self-signed or real | when you want upload and download on separate endpoints (different SNI/ports per direction, easier per-direction QoS) |
+| `split` | TLS 1.3 + HalfDuplex, but the two half-connections are **spread over two exit ports** (the exit accepts both from one chain, the middle picks a port per connection) | 2 (443 + 444) | self-signed or real | makes the pair harder to correlate: an observer sees two unrelated TLS connections to two different ports, not a matching pair |
 | `reality` | **Reality v2**: a genuine TLS 1.3 handshake with a real public HTTPS site; unauthenticated probes are relayed to that site | 1 (443) | none needed | best camouflage; no domain, no certificate, no renewal |
 
 All three carry a **WireGuard tunnel** (middle `wg1` → exit `wg0`) inside
@@ -232,7 +236,7 @@ Updating:
 ```bash
 # re-running either installer is safe and keeps keys/config
 curl -fsSL .../install-exit.sh | bash
-WW_JOIN="$(cat /root/exit-join-token.txt | tail -1)" bash -c "$(curl -fsSL .../install-middle.sh)"
+curl -fsSL .../install-middle.sh | sudo bash -s -- --join "$(tail -1 /root/exit-join-token.txt)"
 ```
 
 ---

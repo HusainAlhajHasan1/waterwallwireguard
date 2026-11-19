@@ -11,8 +11,8 @@
 #
 #   halfduplex  TLS 1.3 + HalfDuplex (upload/download split over two
 #               connections that share one port) + UDP-over-TCP.
-#   split       TLS 1.3 + HalfDuplex with the upload and the download paths
-#               pinned to two different ports/services.
+#   split       TLS 1.3 + HalfDuplex where the two half-connections are spread
+#               over two exit ports, so no observer sees the pair on one port.
 #   reality     Reality v2 camouflage (a genuine TLS 1.3 handshake with a real
 #               public HTTPS site, no certificate of your own required).
 #
@@ -149,8 +149,38 @@ EOF
 #   WW_TARGET_PORT     exit: local WireGuard UDP port
 #
 ww_tls_client_block() {
-    # ww_tls_client_block <node-name> <port>
-    local name="$1" port="$2" verify="${WW_TLS_VERIFY:-false}"
+    # ww_tls_client_block <node-name> <port> [port2]
+    #
+    # One TlsClient and one TcpConnector. With a second port the connector gets
+    # a weighted destination list, so the two half-connections of the pair are
+    # spread over two exit ports (split mode). The exit serves both ports from
+    # the same chain, so the pair still matches.
+    local name="$1" port="$2" port2="${3:-}" verify="${WW_TLS_VERIFY:-false}"
+    if [[ -n "$port2" ]]; then
+        cat <<EOF
+    {
+      "name": "$name",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "$WW_SNI",
+        "alpns": ["h2", "http/1.1"],
+        "verify": $verify
+      },
+      "next": "tcp-out"
+    },
+    {
+      "name": "tcp-out",
+      "type": "TcpConnector",
+      "settings": {
+        "addresses": [
+          { "address": "$WW_EXIT_HOST", "port": $port,  "weight": 1, "nodelay": true },
+          { "address": "$WW_EXIT_HOST", "port": $port2, "weight": 1, "nodelay": true }
+        ]
+      }
+    }
+EOF
+        return 0
+    fi
     cat <<EOF
     {
       "name": "$name",
@@ -274,13 +304,10 @@ EOF
     {
       "name": "half-duplex",
       "type": "HalfDuplexClient",
-      "settings": {
-        "upload": "tls-up",
-        "download": "tls-down"
-      }
+      "settings": {},
+      "next": "tls-out"
     },
-$(ww_tls_client_block "tls-up" "$WW_PORT"),
-$(ww_tls_client_block "tls-down" "${WW_PORT2:?missing WW_PORT2}")
+$(ww_tls_client_block "tls-out" "$WW_PORT" "${WW_PORT2:?missing WW_PORT2}")
   ]
 }
 EOF
@@ -376,6 +403,10 @@ $(ww_tls_server_block "tls-in" "half-duplex-server"),
 EOF
                 ;;
             split)
+                # One TcpListener on both ports: explicit port arrays are opened
+                # as one socket per port and every accepted line enters this
+                # chain, so the two halves of a pair match even when they land
+                # on different port numbers.
                 cat > "$out" <<EOF
 {
   "name": "exit-halfduplex-split",
@@ -383,14 +414,18 @@ EOF
   "config-version": 1,
   "nodes": [
     {
-      "name": "tunnel-in-up",
+      "name": "tunnel-in",
       "type": "TcpListener",
-      "settings": { "address": "0.0.0.0", "port": $WW_PORT, "nodelay": true },
-      "next": "tls-in-up"
+      "settings": {
+        "address": "0.0.0.0",
+        "port": [$WW_PORT, ${WW_PORT2:?missing WW_PORT2}],
+        "nodelay": true
+      },
+      "next": "tls-in"
     },
-$(ww_tls_server_block "tls-in-up" "half-duplex-primary"),
+$(ww_tls_server_block "tls-in" "half-duplex-server"),
     {
-      "name": "half-duplex-primary",
+      "name": "half-duplex-server",
       "type": "HalfDuplexServer",
       "settings": {},
       "next": "udp-over-tcp-server"
@@ -405,18 +440,6 @@ $(ww_tls_server_block "tls-in-up" "half-duplex-primary"),
       "name": "local-wireguard",
       "type": "UdpConnector",
       "settings": { "address": "$thost", "port": $tport }
-    },
-    {
-      "name": "tunnel-in-down",
-      "type": "TcpListener",
-      "settings": { "address": "0.0.0.0", "port": ${WW_PORT2:?missing WW_PORT2}, "nodelay": true },
-      "next": "tls-in-down"
-    },
-$(ww_tls_server_block "tls-in-down" "half-duplex-secondary"),
-    {
-      "name": "half-duplex-secondary",
-      "type": "HalfDuplexServer",
-      "settings": { "pair": "half-duplex-primary" }
     }
   ]
 }
