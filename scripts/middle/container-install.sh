@@ -85,6 +85,15 @@ token_parse "$JOIN" || die "The join token could not be decoded."
 token_to_state
 : "${MODE:?}"; : "${EXIT_HOST:?}"; : "${PORT:?}"
 is_port "$WG_PORT" || die "Invalid --wg-port."
+
+# `pct exec` can hand us a minimal environment; make sure the usual sbin/local
+# directories are searched (wgdash, wg, nginx helpers live there). Appended, so
+# anything already on PATH keeps its precedence.
+case ":$PATH:" in
+    *":/usr/local/bin:"*) ;;
+    *) PATH="$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ;;
+esac
+export PATH
 [[ -n "$DASH_PASS" ]] || DASH_PASS="$(rand_str 16)"
 
 TUNNEL_PORTS="$PORT"
@@ -368,7 +377,8 @@ case "$ENDPOINT" in
         ;;
 esac
 
-if [[ -f /etc/wireguard-dashboard/config.json ]] && [[ -x /usr/local/bin/wgdash ]]; then
+if [[ -f /etc/wireguard-dashboard/config.json ]] && \
+   { [[ -x /usr/local/bin/wgdash ]] || command -v wgdash >/dev/null 2>&1; }; then
     ok "WireGuard Dashboard already installed - refreshing its settings"
 else
     log "Installing the WireGuard Dashboard"
@@ -391,12 +401,47 @@ else
 fi
 
 # Dashboard defaults tuned for this topology (MTU 1280, IPv4 full tunnel).
+#
+# Resolve the CLI explicitly instead of trusting PATH: `pct exec` can hand the
+# script a minimal environment, and the wrapper lives in /usr/local/bin.
 log "Applying dashboard defaults"
-wgdash set-setting endpoint "$ENDPOINT" >/dev/null
-wgdash set-setting default_mtu 1280 >/dev/null
-wgdash set-setting default_allowed_ips '"0.0.0.0/0"' >/dev/null
-wgdash set-setting default_dns '"1.1.1.1, 8.8.8.8"' >/dev/null
-wgdash set-setting default_keepalive 25 >/dev/null
+dash_works() { "$@" --help >/dev/null 2>&1; }
+WGDASH_CMD=()
+if [[ -x /usr/local/bin/wgdash ]] && dash_works /usr/local/bin/wgdash; then
+    WGDASH_CMD=(/usr/local/bin/wgdash)
+else
+    cand="$(command -v wgdash 2>/dev/null || true)"
+    if [[ -n "$cand" ]] && dash_works "$cand"; then
+        WGDASH_CMD=("$cand")
+    elif [[ -x "$WGDASH_DIR/venv/bin/python" ]] && dash_works "$WGDASH_DIR/venv/bin/python" \
+            -m wgdash.cli --config /etc/wireguard-dashboard/config.json; then
+        WGDASH_CMD=("$WGDASH_DIR/venv/bin/python" -m wgdash.cli
+                    --config /etc/wireguard-dashboard/config.json)
+    fi
+fi
+if [[ ${#WGDASH_CMD[@]} -eq 0 ]]; then
+    warn "The dashboard CLI was not found - skipping its default settings."
+    hint "Run later inside the container:"
+    hint "  wgdash set-setting default_mtu 1280"
+    hint "  wgdash set-setting default_allowed_ips '\"0.0.0.0/0\"'"
+    hint "  wgdash set-setting default_dns '\"1.1.1.1, 8.8.8.8\"'"
+    hint "  wgdash set-setting default_keepalive 25"
+    hint "  wgdash set-setting endpoint $ENDPOINT"
+else
+    info "dashboard CLI: ${WGDASH_CMD[0]}"
+    DASH_SET_FAILED=0
+    "${WGDASH_CMD[@]}" set-setting endpoint "$ENDPOINT" >/dev/null 2>&1 || DASH_SET_FAILED=1
+    "${WGDASH_CMD[@]}" set-setting default_mtu 1280 >/dev/null 2>&1 || DASH_SET_FAILED=1
+    "${WGDASH_CMD[@]}" set-setting default_allowed_ips '"0.0.0.0/0"' >/dev/null 2>&1 || DASH_SET_FAILED=1
+    "${WGDASH_CMD[@]}" set-setting default_dns '"1.1.1.1, 8.8.8.8"' >/dev/null 2>&1 || DASH_SET_FAILED=1
+    "${WGDASH_CMD[@]}" set-setting default_keepalive 25 >/dev/null 2>&1 || DASH_SET_FAILED=1
+    if [[ $DASH_SET_FAILED -eq 0 ]]; then
+        ok "dashboard defaults: MTU 1280, 0.0.0.0/0, DNS 1.1.1.1+8.8.8.8, keepalive 25"
+    else
+        warn "Some dashboard defaults could not be set - check Settings in the panel."
+        hint "PATH=$PATH"
+    fi
+fi
 
 # public_url drives cookie security and the share links
 if [[ "$DASH_URL_SCHEME" == https ]]; then

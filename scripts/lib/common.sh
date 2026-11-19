@@ -295,16 +295,20 @@ apt_install() {
 }
 
 wait_for_network() {
-    local i
+    # wait_for_network [tries] - 2s between tries (default 30, i.e. ~60s).
+    # A fresh container often needs a few seconds for DNS/route to settle.
+    local tries="${1:-30}" i
     log "Waiting for network connectivity"
-    for i in {1..60}; do
-        if curl -fsS --connect-timeout 5 --max-time 10 -o /dev/null https://github.com/ 2>/dev/null; then
+    for ((i = 1; i <= tries; i++)); do
+        if curl -fsS --connect-timeout 4 --max-time 8 -o /dev/null https://deb.debian.org/ 2>/dev/null \
+           || curl -fsS --connect-timeout 4 --max-time 8 -o /dev/null https://github.com/ 2>/dev/null; then
             ok "network is up"
             return 0
         fi
         sleep 2
     done
-    warn "Could not reach github.com after 2 minutes, continuing anyway."
+    warn "No internet after $((tries * 2))s - continuing, package downloads may fail."
+    hint "Check DHCP/DNS inside the container: ip -4 addr ; cat /etc/resolv.conf ; curl -I https://deb.debian.org"
     return 0
 }
 
@@ -326,11 +330,29 @@ default_interface() {
 
 sysctl_write() {
     # sysctl_write <file> "k=v" ["k=v" ...]
+    #
+    # Applies every key now and keeps only the ones this kernel lets us set.
+    # An unprivileged container cannot write host-wide knobs (qdisc, BBR...);
+    # dropping them from the file keeps the boot log clean instead of failing
+    # on every start.
     local file="$1"; shift
+    local kv kept=() dropped=()
     mkdir -p "$(dirname "$file")"
-    printf '# managed by waterwallwireguard installers\n' > "$file"
-    printf '%s\n' "$@" >> "$file"
-    sysctl -q -p "$file" >/dev/null 2>&1 || warn "could not apply $file now (values apply after reboot)"
+    for kv in "$@"; do
+        if sysctl -qw "$kv" >/dev/null 2>&1; then
+            kept+=("$kv")
+        else
+            dropped+=("$kv")
+        fi
+    done
+    if [[ ${#kept[@]} -gt 0 ]]; then
+        printf '# managed by waterwallwireguard installers\n' > "$file"
+        printf '%s\n' "${kept[@]}" >> "$file"
+    fi
+    if [[ ${#dropped[@]} -gt 0 ]]; then
+        info "not available in this container, skipped: ${dropped[*]}"
+    fi
+    return 0
 }
 
 wait_service() {

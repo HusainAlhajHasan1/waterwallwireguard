@@ -5,8 +5,8 @@
 # One-liner entry point for the MIDDLE server: run it on the Proxmox host as
 # root. It downloads this repository and runs scripts/middle/install.sh.
 #
-#   WW_JOIN='<token from the exit server>' bash -c "$(curl -fsSL \
-#     https://raw.githubusercontent.com/HusainAlhajHasan1/waterwallwireguard/main/install-middle.sh)"
+#   curl -fsSL https://raw.githubusercontent.com/HusainAlhajHasan1/waterwallwireguard/main/install-middle.sh \
+#     | sudo bash -s -- --join '<token from the exit server>' 
 #
 # Environment:
 #   WW_JOIN   join token printed by the exit installer (or pass --join TOKEN)

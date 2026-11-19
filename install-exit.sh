@@ -7,6 +7,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/HusainAlhajHasan1/waterwallwireguard/main/install-exit.sh | bash
 #   curl -fsSL .../install-exit.sh | bash -s -- --mode reality --port 443
+#   curl -fsSL .../install-exit.sh | bash -s -- --info     # re-print the token
 #
 # Environment:
 #   WW_REPO   owner/repo      (default HusainAlhajHasan1/waterwallwireguard)
