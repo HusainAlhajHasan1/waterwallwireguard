@@ -78,6 +78,15 @@ up() {
         echo "wgmw-routes: $WG_IN is missing" >&2
     fi
 
+    # An unprivileged container may not be allowed to touch the firewall. That
+    # is not fatal (the default FORWARD policy is ACCEPT and no NAT is needed
+    # on this side), but the MSS clamp is worth flagging once.
+    if [[ $HAVE_IPTABLES -eq 1 ]] && ! ipt -t mangle -C FORWARD -i "$WG_IN" -o "$WG_OUT" \
+            -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$MSS" >/dev/null 2>&1; then
+        echo "wgmw-routes: cannot program iptables here (the MSS clamp is skipped," >&2
+        echo "             forwarding still works when the FORWARD policy is ACCEPT)" >&2
+    fi
+
     if wait_dev "$WG_OUT"; then
         ip route replace default dev "$WG_OUT" table "$TABLE"
     else

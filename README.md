@@ -25,10 +25,10 @@ Two one-command installers that build a two-hop VPN:
   clients actually leaves. Only it needs to be reachable from the internet on a
   TCP port.
 
-Because the middle is behind your home router, it only needs **one forwarded UDP
-port**. The middle → exit link is an *outgoing* TLS/Reality connection, so the
-exit is the only side with a public listening port, and the middle works behind
-NAT/CGNAT-free lines without any VPN port exposed.
+Because the middle sits behind your home router, it only needs **one forwarded
+UDP port**. The middle → exit link is an *outgoing* TLS/Reality connection, so
+the exit is the only side with a public listening port; the middle never has to
+be reachable on anything except that single UDP port.
 
 ---
 
@@ -195,9 +195,10 @@ Defaults applied by the installer so a fresh peer just works:
 CLI (inside the container, `pct enter <id>`):
 
 ```bash
-wgdash add phone --days 30 --quota 50     # .conf + QR in the panel
-wgdash qr phone --terminal                # scan from the terminal
+wgdash add phone          # writes wg0.conf, the .conf/QR show up in the panel
+wgdash qr phone           # or draw the QR in the terminal
 wgdash list ; wgdash status ; wg show
+wgdash --help             # quotas/expiry flags of the installed version
 ```
 
 **IPv6 note:** the tunnel is IPv4-only (`0.0.0.0/0`). Clients that have native
@@ -234,9 +235,12 @@ handshake means the tunnel is really broken).
 Updating:
 
 ```bash
-# re-running either installer is safe and keeps keys/config
+# on the exit: re-run (keys, peers and the token survive) - --info re-prints the token
 curl -fsSL .../install-exit.sh | bash
-curl -fsSL .../install-middle.sh | sudo bash -s -- --join "$(tail -1 /root/exit-join-token.txt)"
+curl -fsSL .../install-exit.sh | bash -s -- --info
+
+# on the Proxmox host: same token, same result
+curl -fsSL .../install-middle.sh | sudo bash -s -- --join '<token>'
 ```
 
 ---
